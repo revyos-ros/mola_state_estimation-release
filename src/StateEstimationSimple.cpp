@@ -39,15 +39,21 @@ StateEstimationSimple::StateEstimationSimple() = default;
 
 void StateEstimationSimple::initialize(const mrpt::containers::yaml& cfg)
 {
+    auto lck = std::scoped_lock(state_mtx_);
+
     this->mrpt::system::COutputLogger::setLoggerName("StateEstimationSimple");
 
     MRPT_LOG_DEBUG_STREAM("initialize() called with:\n" << cfg << "\n");
     ENSURE_YAML_ENTRY_EXISTS(cfg, "params");
 
-    reset();
+    // reset:
+    state_ = State();
 
     // Load params:
     params.loadFrom(cfg["params"]);
+
+    // Initialize parent:
+    mola::NavStateFilter::initialize(cfg);
 }
 
 void StateEstimationSimple::spinOnce()
@@ -57,6 +63,8 @@ void StateEstimationSimple::spinOnce()
 
 void StateEstimationSimple::reset()
 {
+    auto lck = std::scoped_lock(state_mtx_);
+
     // reset:
     state_ = State();
 
@@ -66,6 +74,8 @@ void StateEstimationSimple::reset()
 void StateEstimationSimple::fuse_odometry(
     const mrpt::obs::CObservationOdometry& odom, [[maybe_unused]] const std::string& odomName)
 {
+    auto lck = std::scoped_lock(state_mtx_);
+
     // this will work well only for simple datasets with one odometry:
     if (state_.last_odom_obs && state_.last_pose)
     {
@@ -85,6 +95,8 @@ void StateEstimationSimple::fuse_odometry(
 
 void StateEstimationSimple::fuse_imu(const mrpt::obs::CObservationIMU& imu)
 {
+    auto lck = std::scoped_lock(state_mtx_);
+
     // Simple approach to integrate IMU readings with angular velocities:
     // 1) Move forward the prediction in time until this observation's time,
     // 2) Assume angular velocity is exactly as measured by this new IMU reading.
@@ -112,11 +124,20 @@ void StateEstimationSimple::fuse_imu(const mrpt::obs::CObservationIMU& imu)
     state_.last_twist->wy = imuReading.wy;
     state_.last_twist->wz = imuReading.wz;
 
+    {
+        auto&        twistCov = state_.last_twist_cov.emplace();
+        const double varXYZ   = mrpt::square(5.0);  // No info on XYZ
+        const double varRot   = mrpt::square(params.sigma_imu_angular_velocity);
+        twistCov.setDiagonal({varXYZ, varXYZ, varXYZ, varRot, varRot, varRot});
+    }
+
     MRPT_LOG_DEBUG_STREAM("fuse_imu(): new twist: " << state_.last_twist->asString());
 }
 
 void StateEstimationSimple::fuse_gnss(const mrpt::obs::CObservationGPS& gps)
 {
+    auto lck = std::scoped_lock(state_mtx_);
+
     // This estimator will just ignore GPS.
     // Refer to the smoother for a more versatile estimator.
     (void)gps;
@@ -128,16 +149,20 @@ void StateEstimationSimple::fuse_pose(
     const mrpt::Clock::time_point& timestamp, const mrpt::poses::CPose3DPDFGaussian& pose,
     [[maybe_unused]] const std::string& frame_id)
 {
+    auto lck = std::scoped_lock(state_mtx_);
+
     mrpt::poses::CPose3D incrPose;
 
     // numerical sanity: variances>=0 (==0 allowed for some components only)
-    for (int i = 0; i < 6; i++) ASSERT_GE_(pose.cov(i, i), .0);
+    for (int i = 0; i < 6; i++) { ASSERT_GE_(pose.cov(i, i), .0); }
     // and the sum of all strictly >0
     ASSERT_GT_(pose.cov.trace(), .0);
 
     double dt = 0;
     if (state_.last_pose_obs_tim)
+    {
         dt = mrpt::system::timeDifference(*state_.last_pose_obs_tim, timestamp);
+    }
 
     if (dt < 0)
     {
@@ -166,12 +191,29 @@ void StateEstimationSimple::fuse_pose(
         tw.wx = logRot[0] / dt;
         tw.wy = logRot[1] / dt;
         tw.wz = logRot[2] / dt;
+
+        // Rough guess of the covariance of the twist:
+        auto&        twistCov = state_.last_twist_cov.emplace();
+        const double dt2      = dt * dt;
+        const double varXYZ   = mrpt::square(params.sigma_relative_pose_linear) / dt2;  // [m²/s²]
+        const double varRot = mrpt::square(params.sigma_relative_pose_angular) / dt2;  // [rad²/s²]
+        twistCov.setDiagonal({varXYZ, varXYZ, varXYZ, varRot, varRot, varRot});
     }
-    else { state_.last_twist.reset(); }
+    else
+    {
+        state_.last_twist.reset();
+        state_.last_twist_cov.reset();
+    }
 
     if (state_.last_twist)
     {
         MRPT_LOG_DEBUG_STREAM("fuse_pose(): twist after= " << state_.last_twist->asString());
+    }
+    if (state_.last_twist_cov)
+    {
+        MRPT_LOG_DEBUG_STREAM(
+            "fuse_pose(): twist_cov after=\n"
+            << state_.last_twist_cov->asString());
     }
 
     // save for next iter:
@@ -192,21 +234,34 @@ void enforce_planar_pose(mrpt::poses::CPose3D& p)
 
 void StateEstimationSimple::fuse_twist(
     [[maybe_unused]] const mrpt::Clock::time_point& timestamp, const mrpt::math::TTwist3D& twist,
-    [[maybe_unused]] const mrpt::math::CMatrixDouble66& twistCov)
+    const mrpt::math::CMatrixDouble66& twistCov)
 {
-    state_.last_twist = twist;
+    auto lck = std::scoped_lock(state_mtx_);
+
+    state_.last_twist     = twist;
+    state_.last_twist_cov = twistCov;
+
+    MRPT_LOG_DEBUG_STREAM("fuse_twist(): twist    = " << state_.last_twist->asString());
+    MRPT_LOG_DEBUG_STREAM("fuse_twist(): twist_cov= " << state_.last_twist_cov->asString());
 }
 
 std::optional<NavState> StateEstimationSimple::estimated_navstate(
     const mrpt::Clock::time_point& timestamp, [[maybe_unused]] const std::string& frame_id)
 {
-    if (!state_.last_pose_obs_tim) return {};  // None
+    auto lck = std::scoped_lock(state_mtx_);
+
+    if (!state_.last_pose_obs_tim)
+    {
+        return {};  // None
+    }
 
     const double dt = mrpt::system::timeDifference(*state_.last_pose_obs_tim, timestamp);
 
     if (!state_.last_twist || !state_.last_pose ||
         std::abs(dt) > params.max_time_to_use_velocity_model)
+    {
         return {};  // None
+    }
 
     NavState ret;
 
@@ -245,20 +300,80 @@ std::optional<NavState> StateEstimationSimple::estimated_navstate(
     // pose cov:
     auto cov = state_.last_pose->cov;
 
-    double varXYZ = mrpt::square(dt * params.sigma_random_walk_acceleration_linear);
-    double varRot = mrpt::square(dt * params.sigma_random_walk_acceleration_angular);
+    const double varXYZ = mrpt::square(dt * params.sigma_random_walk_acceleration_linear);
+    const double varRot = mrpt::square(dt * params.sigma_random_walk_acceleration_angular);
 
-    for (int i = 0; i < 3; i++) cov(i, i) += varXYZ;
-    for (int i = 3; i < 6; i++) cov(i, i) += varRot;
+    for (int i = 0; i < 3; i++) { cov(i, i) += varXYZ; }
+    for (int i = 3; i < 6; i++) { cov(i, i) += varRot; }
+
+    if (state_.last_twist_cov.has_value())
+    {
+        auto twistCov = state_.last_twist_cov.value();
+        twistCov *= dt * dt;
+        cov += twistCov;
+
+        for (int i = 0; i < 3; i++) { (*state_.last_twist_cov)(i, i) += varXYZ; }
+        for (int i = 3; i < 6; i++) { (*state_.last_twist_cov)(i, i) += varRot; }
+    }
 
     ret.pose.cov_inv = cov.inverse_LLt();
 
     // twist:
     ret.twist = state_.last_twist.value();
 
-    // TODO(jlbc): twist covariance
+    if (state_.last_twist_cov.has_value())
+    {
+        ret.twist_inv_cov = state_.last_twist_cov->inverse_LLt();
+    }
 
     return ret;
+}
+
+void StateEstimationSimple::onNewObservation(const CObservation::Ptr& o)
+{
+    auto lck = std::scoped_lock(state_mtx_);
+
+    const ProfilerEntry tleg(profiler_, "onNewObservation");
+
+    ASSERT_(o);
+
+    MRPT_LOG_DEBUG_STREAM(
+        "onNewObservation(): sensorLabel='" << o->sensorLabel << "' class='"
+                                            << o->GetRuntimeClass()->className);
+
+    // IMU:
+    if (auto obsIMU = std::dynamic_pointer_cast<mrpt::obs::CObservationIMU>(o);
+        obsIMU && std::regex_match(o->sensorLabel, params.do_process_imu_labels_re))
+    {
+        this->fuse_imu(*obsIMU);
+    }
+    // Odometry source:
+    else if (auto obsOdom = std::dynamic_pointer_cast<mrpt::obs::CObservationOdometry>(o);
+             obsOdom && std::regex_match(o->sensorLabel, params.do_process_odometry_labels_re))
+    {
+        this->fuse_odometry(*obsOdom, o->sensorLabel);
+    }
+    // GNSS source:
+    else if (auto obsGPS = std::dynamic_pointer_cast<mrpt::obs::CObservationGPS>(o);
+             obsGPS && std::regex_match(o->sensorLabel, params.do_process_odometry_labels_re))
+    {
+        this->fuse_gnss(*obsGPS);
+    }
+    else
+    {
+        MRPT_LOG_THROTTLE_WARN_FMT(
+            10.0,
+            "Do not know how to handle incoming observation label='%s' "
+            "class='%s'",
+            o->sensorLabel.c_str(), o->GetRuntimeClass()->className);
+    }
+}
+
+std::optional<mrpt::math::TTwist3D> StateEstimationSimple::get_last_twist() const
+{
+    auto lck = std::scoped_lock(state_mtx_);
+
+    return state_.last_twist;
 }
 
 }  // namespace mola::state_estimation_simple
