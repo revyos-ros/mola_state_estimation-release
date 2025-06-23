@@ -1,3 +1,30 @@
+## mola_state_estimation (jazzy) - 1.9.0-1
+
+The packages in the `mola_state_estimation` repository were released into the `jazzy` distro by running `/root/venv/bin/bloom-release -r jazzy mola_state_estimation --override-release-repository-push-url git@github.com:revyos-ros/mola_state_estimation-release.git` on `Mon, 23 Jun 2025 05:58:51 -0000`
+
+These packages were released:
+- `mola_imu_preintegration`
+- `mola_state_estimation`
+- `mola_state_estimation_simple`
+- `mola_state_estimation_smoother`
+
+Version of package(s) in repository `mola_state_estimation`:
+
+- upstream repository: https://github.com/MOLAorg/mola_state_estimation.git
+- release repository: https://github.com/revyos-ros/mola_state_estimation-release.git
+- rosdistro version: `1.9.0-1`
+- old version: `1.7.0-1`
+- new version: `1.9.0-1`
+
+Versions of tools used:
+
+- bloom version: `0.12.0`
+- catkin_pkg version: `1.0.0`
+- rosdep version: `0.25.1`
+- rosdistro version: `1.0.1`
+- vcstools version: `0.1.42`
+
+
 ## mola_state_estimation (humble) - 1.9.0-1
 
 The packages in the `mola_state_estimation` repository were released into the `humble` distro by running `/home/z572/gits/revyos-ros/venv/bin/bloom-release -r humble mola_state_estimation --override-release-repository-push-url git@github.com:revyos-ros/mola_state_estimation-release.git` on `Mon, 16 Jun 2025 05:31:09 -0000`
