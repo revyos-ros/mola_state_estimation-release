@@ -30,6 +30,8 @@
 #include <mrpt/math/TPoint3D.h>
 #include <mrpt/math/TTwist3D.h>
 
+#include <regex>
+
 namespace mola::state_estimation_simple
 {
 /** Parameters needed by StateEstimationSimple.
@@ -39,8 +41,7 @@ namespace mola::state_estimation_simple
 class Parameters
 {
    public:
-    Parameters()  = default;
-    ~Parameters() = default;
+    Parameters() = default;
 
     /// Loads all parameters from a YAML map node.
     void loadFrom(const mrpt::containers::yaml& cfg);
@@ -52,9 +53,23 @@ class Parameters
     mrpt::math::TTwist3D initial_twist;
 
     double sigma_random_walk_acceleration_linear  = 1.0;  // [m/s²]
-    double sigma_random_walk_acceleration_angular = 1.0;  // [rad/s²]
+    double sigma_random_walk_acceleration_angular = 10.0;  // [rad/s²]
+
+    double sigma_relative_pose_linear  = 1.0;  // [m]
+    double sigma_relative_pose_angular = 0.1;  // [rad]
+
+    double sigma_imu_angular_velocity = 0.05;  // [rad/s]
 
     bool enforce_planar_motion = false;
+
+    //!< regex for IMU sensor labels (ROS topics) to accept as IMU readings.
+    std::regex do_process_imu_labels_re{".*"};
+
+    //!< regex for odometry inputs labels (ROS topics) to be accepted as inputs
+    std::regex do_process_odometry_labels_re{".*"};
+
+    //!< regex for GNSS (GPS) labels (ROS topics) to be accepted as inputs
+    std::regex do_process_gnss_labels_re{".*"};
 };
 
 }  // namespace mola::state_estimation_simple
