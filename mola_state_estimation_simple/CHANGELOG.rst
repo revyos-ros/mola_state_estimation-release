@@ -2,6 +2,24 @@
 Changelog for package mola_state_estimation_simple
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+1.9.0 (2025-06-06)
+------------------
+* State estimation interface is now raw data consumer too
+* FIX: Error if sensor labels were provided in config yaml file
+* Contributors: Jose Luis Blanco-Claraco
+
+1.8.1 (2025-05-25)
+------------------
+* Feature: Implement basic twist covariance handling in the SimpleEstimator
+* fixes for clang-tidy
+* Contributors: Jose Luis Blanco-Claraco
+
+1.8.0 (2025-03-15)
+------------------
+* const correctness
+* State estimation modules now are proper MOLA raw inputs, so they automatically subscribe and consume input sensors (IMU, GPS, wheels odometry)
+* Contributors: Jose Luis Blanco-Claraco
+
 1.7.0 (2025-02-22)
 ------------------
 * Add parameter enforce_planar_motion
