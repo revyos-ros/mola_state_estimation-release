@@ -124,8 +124,6 @@ std::optional<
 // -------- StateEstimationSmoother -------
 StateEstimationSmoother::StateEstimationSmoother() = default;
 
-StateEstimationSmoother::~StateEstimationSmoother() = default;
-
 void StateEstimationSmoother::initialize(const mrpt::containers::yaml& cfg)
 {
     this->mrpt::system::COutputLogger::setLoggerName("StateEstimationSmoother");
@@ -137,13 +135,16 @@ void StateEstimationSmoother::initialize(const mrpt::containers::yaml& cfg)
 
     // Load params:
     params.loadFrom(cfg["params"]);
+
+    // Initialize parent:
+    mola::NavStateFilter::initialize(cfg);
 }
 
 void StateEstimationSmoother::spinOnce()
 {
     // At the predefined module rate, publish the current estimation,
     // if we have any subscriber:
-    if (!anyUpdateLocalizationSubscriber()) return;
+    if (!anyUpdateLocalizationSubscriber()) { return; }
 
     auto lck = mrpt::lockHelper(stateMutex_);
 
@@ -373,6 +374,47 @@ std::set<std::string> StateEstimationSmoother::known_frame_ids()
     return ret;
 }
 
+void StateEstimationSmoother::onNewObservation(const CObservation::Ptr& o)
+{
+    const ProfilerEntry tleg(profiler_, "onNewObservation");
+
+    ASSERT_(o);
+
+    // IMU:
+    if (auto obsIMU = std::dynamic_pointer_cast<mrpt::obs::CObservationIMU>(o);
+        obsIMU &&
+        std::regex_match(o->sensorLabel, params.do_process_imu_labels_re))
+    {
+        this->fuse_imu(*obsIMU);
+    }
+    // Odometry source:
+    else if (auto obsOdom =
+                 std::dynamic_pointer_cast<mrpt::obs::CObservationOdometry>(o);
+             obsOdom &&
+             std::regex_match(
+                 o->sensorLabel, params.do_process_odometry_labels_re))
+    {
+        this->fuse_odometry(*obsOdom, o->sensorLabel);
+    }
+    // GNSS source:
+    else if (auto obsGPS =
+                 std::dynamic_pointer_cast<mrpt::obs::CObservationGPS>(o);
+             obsGPS &&
+             std::regex_match(
+                 o->sensorLabel, params.do_process_odometry_labels_re))
+    {
+        this->fuse_gnss(*obsGPS);
+    }
+    else
+    {
+        MRPT_LOG_THROTTLE_WARN_FMT(
+            10.0,
+            "Do not know how to handle incoming observation label='%s' "
+            "class='%s'",
+            o->sensorLabel.c_str(), o->GetRuntimeClass()->className);
+    }
+}
+
 namespace
 {
 void enforce_planar_pose(mrpt::poses::CPose3D& p)
@@ -494,7 +536,7 @@ std::optional<NavState> StateEstimationSmoother::build_and_optimize_fg(
         const double XY_SIGMA       = 1e10;
         const double Z_SIGMA        = 1e-4;
         const auto   planar_z_noise = gtsam::noiseModel::Diagonal::Sigmas(
-              gtsam::Vector3(XY_SIGMA, XY_SIGMA, Z_SIGMA));
+            gtsam::Vector3(XY_SIGMA, XY_SIGMA, Z_SIGMA));
 
         for (size_t i = 0; i < entries.size(); i++)
         {
