@@ -28,6 +28,7 @@
 // this package:
 #include <mola_kernel/interfaces/LocalizationSourceBase.h>
 #include <mola_kernel/interfaces/NavStateFilter.h>
+#include <mola_kernel/interfaces/RawDataSourceBase.h>
 #include <mola_state_estimation_smoother/FactorTricycleKinematics.h>
 #include <mola_state_estimation_smoother/Parameters.h>
 
@@ -103,7 +104,6 @@ class StateEstimationSmoother : public mola::NavStateFilter,
 
    public:
     StateEstimationSmoother();
-    ~StateEstimationSmoother();
 
     /** \name Main API
      *  @{ */
@@ -163,6 +163,10 @@ class StateEstimationSmoother : public mola::NavStateFilter,
 
     /** @} */
 
+   protected:
+    // Implementation of RawDataConsumer
+    void onNewObservation(const CObservation::Ptr& o) override;
+
    private:
     // everything related to gtsam is hidden in the public API via pimpl
     struct GtsamImpl;
@@ -175,7 +179,7 @@ class StateEstimationSmoother : public mola::NavStateFilter,
         PoseData() = default;
 
         mrpt::poses::CPose3DPDFGaussian pose;
-        frameid_t                       frameId;
+        frameid_t                       frameId = 0;
     };
 
     // an observation from fuse_odometry()
@@ -184,7 +188,7 @@ class StateEstimationSmoother : public mola::NavStateFilter,
         OdomData() = default;
 
         mrpt::poses::CPose3D pose;
-        frameid_t            frameId;
+        frameid_t            frameId = 0;
     };
 
     // an observation from fuse_twist()
